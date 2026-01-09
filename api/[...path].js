@@ -1,7 +1,11 @@
-export default async function handler(req, res) {
-    const { path } = req.query;
-    const apiPath = Array.isArray(path) ? path.join('/') : path;
-    const targetUrl = `https://api.x2download.is/${apiPath}`;
+export const config = {
+    runtime: 'edge',
+};
+
+export default async function handler(request) {
+    const url = new URL(request.url);
+    const path = url.pathname.replace('/api/', '');
+    const targetUrl = `https://api.x2download.is/${path}`;
 
     try {
         const headers = {
@@ -11,27 +15,39 @@ export default async function handler(req, res) {
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         };
 
-        if (req.headers.key) {
-            headers['key'] = req.headers.key;
+        const keyHeader = request.headers.get('key');
+        if (keyHeader) {
+            headers['key'] = keyHeader;
         }
-        if (req.headers['content-type']) {
-            headers['content-type'] = req.headers['content-type'];
+
+        const contentType = request.headers.get('content-type');
+        if (contentType) {
+            headers['content-type'] = contentType;
         }
 
         const fetchOptions = {
-            method: req.method,
+            method: request.method,
             headers
         };
 
-        if (req.method === 'POST' && req.body) {
-            fetchOptions.body = typeof req.body === 'string' ? req.body : new URLSearchParams(req.body).toString();
+        if (request.method === 'POST') {
+            fetchOptions.body = await request.text();
         }
 
         const response = await fetch(targetUrl, fetchOptions);
-        const data = await response.json();
+        const data = await response.text();
 
-        res.status(response.status).json(data);
+        return new Response(data, {
+            status: response.status,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 }
