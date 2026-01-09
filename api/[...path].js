@@ -1,53 +1,67 @@
-export const config = {
-    runtime: 'edge',
-};
-
-export default async function handler(request) {
-    const url = new URL(request.url);
-    const path = url.pathname.replace('/api/', '');
-    const targetUrl = `https://api.x2download.is/${path}`;
+export default async function handler(req, res) {
+    // Handle CORS preflight
+    if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, key');
+        return res.status(200).end();
+    }
 
     try {
+        const { path } = req.query;
+        // Vercel path segments are arrays. Join them.
+        const pathStr = Array.isArray(path) ? path.join('/') : path;
+        const targetUrl = `https://api.x2download.is/${pathStr}`;
+
+        console.log(`Proxying to: ${targetUrl}`);
+
         const headers = {
-            'accept': '*/*',
-            'origin': 'https://x2download.is',
-            'referer': 'https://x2download.is/',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'Accept': '*/*',
+            'Origin': 'https://x2download.is',
+            'Referer': 'https://x2download.is/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         };
 
-        const keyHeader = request.headers.get('key');
-        if (keyHeader) {
-            headers['key'] = keyHeader;
-        }
+        // Forward specific headers
+        if (req.headers.key) headers['key'] = req.headers.key;
+        if (req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'];
 
-        const contentType = request.headers.get('content-type');
-        if (contentType) {
-            headers['content-type'] = contentType;
-        }
-
-        const fetchOptions = {
-            method: request.method,
-            headers
+        const options = {
+            method: req.method,
+            headers: headers,
         };
 
-        if (request.method === 'POST') {
-            fetchOptions.body = await request.text();
+        if (req.method === 'POST') {
+            options.body = req.body; // Vercel parses body for us in Node runtime
+            // If body is object, we might need to stringify form data if upstream expects urlencoded
+            if (typeof req.body === 'object') {
+                const searchParams = new URLSearchParams();
+                for (const key in req.body) {
+                    searchParams.append(key, req.body[key]);
+                }
+                options.body = searchParams.toString();
+            }
         }
 
-        const response = await fetch(targetUrl, fetchOptions);
+        const response = await fetch(targetUrl, options);
+
+        // Read response
         const data = await response.text();
 
-        return new Response(data, {
-            status: response.status,
-            headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            }
-        });
+        // Set headers for response
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+
+        try {
+            const json = JSON.parse(data);
+            res.status(response.status).json(json);
+        } catch (e) {
+            // Fallback if response is not JSON
+            res.status(response.status).send(data);
+        }
+
     } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        console.error('Proxy Error:', error);
+        res.status(500).json({ error: 'Internal Server Error', details: error.message });
     }
 }
