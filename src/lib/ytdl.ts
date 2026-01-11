@@ -1,89 +1,57 @@
+const FORMATS = {
+    mp3: 'MP3 (Audio Only)',
+    '144': '144p',
+    '240': '240p',
+    '360': '360p',
+    '480': '480p',
+    '720': '720p (HD)',
+    '1080': '1080p (Full HD)'
+};
+
+function formatDuration(seconds: number): string {
+    if (!seconds) return '00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h > 0
+        ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+        : `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 export class YouTubeDownloader {
-    private keyEndpoint = '/api/v2/sanity/key';
-    private converterEndpoint = '/api/v2/converter';
+    static FORMATS = FORMATS;
 
-    async getKey(): Promise<string> {
-        try {
-            const response = await fetch(this.keyEndpoint, {
-                method: 'GET',
-                headers: {
-                    'accept': '*/*',
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            if (data && data.key) {
-                return data.key;
-            }
-            throw new Error('Key not found in response');
-        } catch (error: any) {
-            console.error('Failed to get key:', error);
-            throw new Error(`Failed to get key: ${error.message}`);
-        }
-    }
-
-    async convert(youtubeUrl: string, options: {
-        format?: string,
-        audioBitrate?: string,
-        videoQuality?: string,
-        vCodec?: string
-    } = {}) {
-        const {
-            format = 'mp3',
-            audioBitrate = '320',
-            videoQuality = '720',
-            vCodec = 'h264'
-        } = options;
+    async convert(youtubeUrl: string, options: { format?: string } = {}) {
+        const format = options.format || 'mp3';
 
         try {
-            const apiKey = await this.getKey();
-
-            const params = new URLSearchParams();
-            params.append('link', youtubeUrl);
-            params.append('format', format);
-            params.append('audioBitrate', audioBitrate);
-            params.append('videoQuality', videoQuality);
-            params.append('vCodec', vCodec);
-
-            const response = await fetch(this.converterEndpoint, {
-                method: 'POST',
-                headers: {
-                    'accept': '*/*',
-                    'content-type': 'application/x-www-form-urlencoded',
-                    'key': apiKey,
-                },
-                body: params.toString()
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
+            const response = await fetch(`/api?url=${encodeURIComponent(youtubeUrl)}&format=${format}`);
             const data = await response.json();
 
-            if (data && data.status === 'tunnel' && data.url) {
-                return {
-                    success: true,
-                    downloadUrl: data.url,
-                    filename: data.filename,
-                    status: data.status
-                };
-            } else {
+            if (!data.status || data.code !== 200) {
                 return {
                     success: false,
-                    error: data?.error || 'Conversion failed or invalid response',
-                    raw: data
+                    error: data.message || 'Gagal mengambil data'
                 };
             }
+
+            const r = data.result;
+            return {
+                success: true,
+                title: r.title || 'Tanpa Judul',
+                duration: formatDuration(r.duration),
+                thumbnail: r.thumbnail,
+                quality: r.quality || format.toUpperCase(),
+                downloadUrl: r.download,
+                filename: r.title || 'download',
+                type: format === 'mp3' ? 'audio' : 'video',
+                ext: format === 'mp3' ? 'mp3' : 'mp4'
+            };
 
         } catch (error: any) {
             return {
                 success: false,
-                error: error.message
+                error: error.message || 'Terjadi kesalahan'
             };
         }
     }
